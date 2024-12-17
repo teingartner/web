@@ -9,11 +9,19 @@ function MVV_Map () {
     this.center = [11.57, 48.15]
     this.distances_per_pixel = []
 
+    this.transportChoice = {
+        subway: true,
+        train: false,
+        tram: false
+    }
+
     var projection;
     var pathGenerator;
 
     var xScale = d3.scaleLinear()
     var yScale = d3.scaleLinear()
+
+
 
     
 
@@ -28,15 +36,19 @@ function MVV_Map () {
         
         d3.select("body")
         .append("svg")
+        .style("float", "left")
         .attr("width",  that.width + that.margin.left + that.margin.right)
         .attr("height",  that.height + that.margin.top + that.margin.bottom)
         .append("g")
         .attr("transform",
             "translate(" + that.margin.left + "," + that.margin.top + ")")
-            .attr("class", "map_content")            ;
+            .attr("class", "map_content")   
+            
+        d3.select(".map_content").append("g").attr("class", "stationen");;
             
         d3.select("body").append("div").attr("class", "tooltip")
         tooltip = d3.select(".tooltip");
+
 
         // add projection
         projection = d3.geoMercator()
@@ -62,25 +74,82 @@ function MVV_Map () {
 
 
         //load data
-        var [stops, stops_list] = await this.load_stops(d => (d.subway == "yes" || d.train == "yes"));
+        var [stops, stops_list] = await this.load_stops();
         var stadtteile = await this.load_mapData();
     
         //render Stadtteile
+        this.addUI()
         this.addStadtteile(stadtteile);
-    
-        localStorage.removeItem("proximityImage")   
         this.addColours(stops_list)
         this.addPoints(stops)
         this.addMe(me)
     }
 
+    this.addUI = function() {
+        var that = this;
+
+        d3.select("body").append("div").attr("class", "UI")
+        
+        var data_selection = d3.select(".UI").append("div").attr("class", "UI-div").attr("id", "data-select")
+        data_selection.append("p").style("margin", "0px").html("Select Transporttype")
+        data_selection
+            .append("input")
+            .attr("type", "checkbox")
+            .attr("id", "subway")
+            .attr("name", "subway")
+            .attr("value", true)
+            .attr("checked", true);
+        data_selection.append("label").attr("for", "subway").html("U-Bahn");
+        data_selection.append("br");
+
+        data_selection
+            .append("input")
+            .attr("type", "checkbox")
+            .attr("id", "train")
+            .attr("name", "train")
+            // .attr("value", false)
+            // .attr("checked", false);
+        data_selection.append("label").attr("for", "train").html("S-Bahn");
+        data_selection.append("br");
+
+        data_selection
+            .append("input")
+            .attr("type", "checkbox")
+            .attr("id", "tram")
+            .attr("name", "tram")
+            // .attr("value", false)
+            // .attr("checked", false);
+        data_selection.append("label").attr("for", "tram").html("Tram");
+        data_selection.append("br");
+
+        d3.selectAll("input")
+            .on("change", async function(d) {
+                let input = d3.select(d.srcElement)
+                let id = input.attr("id")
+                let value = input.property("checked")
+                that.transportChoice[id] = value;
+
+                var [stops, stops_list] = await that.load_stops();
+                that.addColours(stops_list)
+                that.addPoints(stops)
+            })
+
+    }
 
 
-    this.load_stops = async function(condition){
+
+    this.load_stops = async function(){
+        var data_choice = this.transportChoice
+        var conditidion = []
+        Object.keys(data_choice).forEach((key) => {
+            if (data_choice[key] == true) {
+                conditidion.push("(d." + key + " == 'yes')")
+            }
+        })
+        const predicate = new Function('d', `return ${conditidion.join(" || ")};`);
         // var stops = d3.tsv("/data/stops.csv", (d) => {
         var stops = await d3.json("data/osm_stationen.geojson")
-        console.log(stops)
-        var filtered = filterOSMProperty(stops, condition)
+        var filtered = filterOSMProperty(stops, predicate)
         var points_list = filtered.features.map(p => p.geometry.coordinates)
         // TODO remove duplicates
         // return (d.subway == true) || (d.tram == true) || (d.train == true)
@@ -144,16 +213,19 @@ function MVV_Map () {
         // // Put the image data back into the canvas
         ctx.putImageData(imageData, 0, 0);
 
+        // d3.select("image").remove()
+
         const image = new Image();
         image.onload = function () {
-            d3.select(".map_content")
-                .append("image")
+            d3.select(".map_content").selectAll("image")
+                .data([""])
+                .join("image")
                 .attr("x", 0)
                 .attr("y", 0)
                 .attr("width", width)
                 .attr("height", height)
                 .attr("href", image.src)
-                .style("opacity", 0.8)
+                .style("opacity", 0.9)
                 .on("mouseover", function (event, d) {
                     tooltip.style("visibility", "visible")
                     // .text((event.x - that.margin.left) + ", " + (event.y - that.margin.top));
@@ -175,10 +247,10 @@ function MVV_Map () {
 
     
     this.addPoints = function(data_points) {
-        const stationsGroup = d3.select(".map_content").append("g").attr("class", "stationen");
+        
 
         // Draw each borough as a path
-        stationsGroup.selectAll("path")
+        d3.select(".stationen").selectAll("path")
             .data(data_points.features)
             .join("path")
             .attr("d", pathGenerator.pointRadius(3))
