@@ -7,12 +7,15 @@ function MVV_Map () {
     this.height = 600 - margin.top - margin.bottom;
 
     this.center = [11.57, 48.15]
+    this.distances_per_pixel = []
 
     var projection;
     var pathGenerator;
 
     var xScale = d3.scaleLinear()
     var yScale = d3.scaleLinear()
+
+    
 
     var tooltip;
 
@@ -59,71 +62,32 @@ function MVV_Map () {
 
 
         //load data
-        var stops = await this.load_stops();
+        var [stops, stops_list] = await this.load_stops(d => (d.subway == "yes" || d.train == "yes"));
         var stadtteile = await this.load_mapData();
     
         //render Stadtteile
         this.addStadtteile(stadtteile);
     
-        // localStorage.removeItem("proximityImage")   
-        this.addColours(stops)
+        localStorage.removeItem("proximityImage")   
+        this.addColours(stops_list)
         this.addPoints(stops)
         this.addMe(me)
     }
 
-    this.load_stops = async function(){
-        var stops = d3.tsv("/data/stops.csv", (d) => {
-            // console.log(d)
-            const regex = /c\((-?\d+\.\d+),\s*(-?\d+\.\d+)\)/;
-            let match = d.geometry.match(regex); // Match the regex
-            let [_, longitude, latitude] = match; // Extract matched groups
-            
-            return {
-                name: d.name,
-                description: d.description,
-                subway: d.subway  == "yes"? true : false,
-                tram: d.tram == "yes"? true : false, 
-                train: d.train  == "yes"? true : false,
-                lat: parseFloat(latitude),
-                lon: parseFloat(longitude),
-            };
-            }).then((transport_data) => {
-                var transport_data = transport_data
-                var filtered = transport_data.filter(function (d) {
-                    return (d.subway == true) || (d.tram == true) || (d.train == true)
-                })
-                return filtered
 
-            });   
-        return stops
+
+    this.load_stops = async function(condition){
+        // var stops = d3.tsv("/data/stops.csv", (d) => {
+        var stops = await d3.json("data/osm_stationen.geojson")
+        console.log(stops)
+        var filtered = filterOSMProperty(stops, condition)
+        var points_list = filtered.features.map(p => p.geometry.coordinates)
+        // TODO remove duplicates
+        // return (d.subway == true) || (d.tram == true) || (d.train == true)
+        return [filtered, points_list]
     }
 
-    this.load_stops = async function(){
-        var stops = d3.tsv("/data/stops.csv", (d) => {
-            // console.log(d)
-            const regex = /c\((-?\d+\.\d+),\s*(-?\d+\.\d+)\)/;
-            let match = d.geometry.match(regex); // Match the regex
-            let [_, longitude, latitude] = match; // Extract matched groups
-            
-            return {
-                name: d.name,
-                description: d.description,
-                subway: d.subway  == "yes"? true : false,
-                tram: d.tram == "yes"? true : false, 
-                train: d.train  == "yes"? true : false,
-                lat: parseFloat(latitude),
-                lon: parseFloat(longitude),
-            };
-            }).then((transport_data) => {
-                var transport_data = transport_data
-                var filtered = transport_data.filter(function (d) {
-                    return (d.subway == true) || (d.tram == true) || (d.train == true)
-                })
-                return filtered
 
-            });   
-        return stops
-    }
 
     this.load_mapData = async function(){
         var stadtteile = await d3.json("data/osm_stadtteilgrenzen.geojson")
@@ -132,80 +96,54 @@ function MVV_Map () {
     
     
     
-    this.addColours = function (stops) {
+    this.addColours = function (stops_list) {
+        var that = this;
+
+        var stops_list_in_pixel = stops_list.map(d => [xScale(d[0]), yScale(d[1])])
+        const delaunay = d3.Delaunay.from(stops_list_in_pixel);
+
+        // Iterate over each pixel
+        for (let y = 0; y < that.height; y++) {
+            for (let x = 0; x < that.width; x++) {
+                // Calculate the distance to each point
+                var index_in_points = delaunay.find(x, y)
+                var distance = Math.hypot(stops_list_in_pixel[index_in_points][0] - x, stops_list_in_pixel[index_in_points][1] - y);
+                that.distances_per_pixel[y * that.width + x] = distance;
+
+            }
+        }
+
+        //colour scale
+        var maxDistance = Math.max(...that.distances_per_pixel)
+        const colorScale = d3.scaleSequential(d3.interpolateRdYlGn)
+            .domain([0, maxDistance]);
+
         // Create an offscreen canvas for pixel manipulation
         const canvas = document.createElement("canvas");
-        canvas.width = width;
-        canvas.height = height;
+        canvas.width = that.width;
+        canvas.height = that.height;
         const ctx = canvas.getContext("2d");
 
         // Get the image data object
         const imageData = ctx.createImageData(width, height);
         const data = imageData.data;
 
-        // Check for saved image in localStorage
-        const savedImage = localStorage.getItem("proximityImage");
-
-        // Convert the canvas to an image and append it to the SVG
-        if (savedImage) {
-            // Load saved image if it exists
-            loadImage(savedImage);
-        } else {
-            // Recompute and save image
-            const newImage = computeColors(stops);
-            localStorage.setItem("proximityImage", newImage);
-
-            // Render the newly computed image
-            loadImage(newImage);
-        }
-    }
-
-
-
-
-    function computeColors(stops) {
-        // Define a color scale (greener = closer, redder = farther)
-        // Calculate the farthest actual distance
-        const maxDistance = d3.max(
-            d3.range(height).flatMap(y => 
-                d3.range(width).map(x => 
-                    Math.min(...stops.map(p => Math.hypot(xScale(p.lon) - x, yScale(p.lat) - y)))
-                )
-            )
-        );
-
-        // Define the color scale with dynamic max distance
-        const colorScale = d3.scaleSequential(d3.interpolateRdYlGn)
-            .domain([0, maxDistance]);
-
-        // Iterate over each pixel
-        for (let y = 0; y < height; y++) {
-            for (let x = 0; x < width; x++) {
-                // Calculate the distance to each point
-                const distances = stops.map(p => Math.hypot(xScale(p.lon) - x, yScale(p.lat) - y));
-                const nearestDistance = Math.min(...distances);
-
-                // Get the color for this distance
-                const color = d3.color(colorScale(nearestDistance));
-
-                // Calculate the pixel index
-                const pixelIndex = (y * width + x) * 4;
-
-                // Set the RGBA values
-                data[pixelIndex] = color.r;     // Red
-                data[pixelIndex + 1] = color.g; // Green
-                data[pixelIndex + 2] = color.b; // Blue
-                data[pixelIndex + 3] = 255;     // Alpha (fully opaque)
-            }
+        var pixelIndex = 0;
+        for (let i = 0; i < that.distances_per_pixel.length; i++) {
+            const color = d3.color(colorScale(that.distances_per_pixel[i]));
+            // Set the RGBA values
+            data[pixelIndex] = color.r;     // Red
+            data[pixelIndex + 1] = color.g; // Green
+            data[pixelIndex + 2] = color.b; // Blue
+            data[pixelIndex + 3] = 255;     // Alpha (fully opaque)
+            pixelIndex += 4;
         }
 
-        // Put the image data back into the canvas
+        let i = 3;
+
+        // // Put the image data back into the canvas
         ctx.putImageData(imageData, 0, 0);
-        return canvas.toDataURL();
-    }
 
-    // Load precomputed image if available
-    function loadImage(savedImage) {
         const image = new Image();
         image.onload = function () {
             d3.select(".map_content")
@@ -216,43 +154,73 @@ function MVV_Map () {
                 .attr("height", height)
                 .attr("href", image.src)
                 .style("opacity", 0.8)
+                .on("mouseover", function (event, d) {
+                    tooltip.style("visibility", "visible")
+                    // .text((event.x - that.margin.left) + ", " + (event.y - that.margin.top));
+                })
+                .on("mousemove", function (event, d) {
+                    tooltip
+                    .text((event.x - that.margin.left) + ", " + (event.y - that.margin.top) + ", "
+                     + Math.round(10*(that.distances_per_pixel[(event.y - that.margin.top) * that.width + (event.x - that.margin.left)]))/10)
+                    .style("top", (event.pageY - 10) + "px")
+                    .style("left", (event.pageX + 10) + "px");
+                })
+                .on("mouseout", function (event, d) {
+                    tooltip.style("visibility", "hidden");
+                })
                 .lower();
         };
-        image.src = savedImage;
+        image.src = canvas.toDataURL();
     }
 
-
     
-this.addPoints = function(data_points) {
-    // Draw the points on top of the image
-    d3.select(".map_content").append("g").attr("class", "ubahn_points").selectAll("circle.ubahnen")
-        .data(data_points)
-        .join("circle")
-        .attr("class", "ubahnen")
-        .attr("cx", d => xScale(d.lon))
-        .attr("cy", d => yScale(d.lat))
-        .attr("r", 4)
-        .attr("fill", "black")
-        .on("mouseover", function (event, d) {
-            tooltip.style("visibility", "visible").text(d.name);
-            d3.select(this).attr("fill", "grey")
-        })
-        .on("mousemove", function (event, d) {
-            tooltip.style("top", (event.pageY - 10) + "px")
-            .style("left", (event.pageX + 10) + "px");
-        })
-        .on("mouseout", function (event, d) {
-            d3.select(this).attr("fill", "black");
-            tooltip.style("visibility", "hidden");
-        });
+    this.addPoints = function(data_points) {
+        const stationsGroup = d3.select(".map_content").append("g").attr("class", "stationen");
 
-        d3.selectAll("circle").raise()
+        // Draw each borough as a path
+        stationsGroup.selectAll("path")
+            .data(data_points.features)
+            .join("path")
+            .attr("d", pathGenerator.pointRadius(3))
+            // .attr("d", pathGenerator)
+            .attr("fill", (d) => {
+                if (d.properties.subway == "yes") {
+                    return "blue"
+                }
+                else if (d.properties.train == "yes") {
+                    return "green"
+                }
+                else if (d.properties.tram == "yes") {
+                    return "red"
+                }  
+            })
+            .on("mouseover", function (event, d) {
+                tooltip.style("visibility", "visible").text(d.properties.name);
+                d3.select(this).attr("fill", "grey")
+            })
+            .on("mousemove", function (event, d) {
+                tooltip.style("top", (event.pageY - 10) + "px")
+                .style("left", (event.pageX + 10) + "px");
+            })
+            .on("mouseout", function (event, d) {
+                d3.select(this).attr("fill", (d) => {
+                    if (d.properties.subway == "yes") {
+                        return "blue"
+                    }
+                    else if (d.properties.subway == "yes") {
+                        return "green"
+                    }
+                    else if (d.properties.tram == "yes") {
+                        return "red"
+                    }  
+                });
+                tooltip.style("visibility", "hidden");
+            });
+            
+    }
 
-        
-}
-
-this.addMe = function(me_position) {
-    d3.select(".map_content").selectAll("circle.me")
+    this.addMe = function(me_position) {
+        d3.select(".map_content").selectAll("circle.me")
             .data([me_position])
             .join("circle")
             .attr("class", "me")
@@ -260,30 +228,58 @@ this.addMe = function(me_position) {
             .attr("cy", d => yScale(d.lat))
             .attr("r", 5)
             .attr("fill", "pink");
-}
-
-// });
+    }
 
 
 
-this.addStadtteile = function(stadtteile) {
-        // console.log("center: " + projection.center())
-        // console.log("scale: " + projection.scale())
-        // console.log("translate: " + projection.translate())
-        // console.log("clipExtent: " + projection.clipExtent())
- 
-        const boroughsGroup = d3.select(".map_content").append("g").attr("class", "boroughs");
 
-        // Draw each borough as a path
-        boroughsGroup.selectAll("path")
-            .data(stadtteile.features)
-            .join("path")
-            .attr("d", pathGenerator)
-            // .attr("d", pathGenerator)
-            .attr("fill", "none") // No fill by default
-            .attr("stroke", "black") // Borough boundaries
 
-}
+    this.addStadtteile = function(stadtteile) {
+            // console.log("center: " + projection.center())
+            // console.log("scale: " + projection.scale())
+            // console.log("translate: " + projection.translate())
+            // console.log("clipExtent: " + projection.clipExtent())
+    
+            const boroughsGroup = d3.select(".map_content").append("g").attr("class", "boroughs");
+
+            // Draw each borough as a path
+            boroughsGroup.selectAll("path")
+                .data(stadtteile.features)
+                .join("path")
+                .attr("d", pathGenerator)
+                // .attr("d", pathGenerator)
+                .attr("fill", "none") // No fill by default
+                .attr("stroke", "black") // Borough boundaries
+
+    }
+
+    function filterOSMProperty( obj, predicate) {
+        let crs = obj.crs
+        let name = obj.name
+        let type = obj.type
+        let features = obj.features
+
+        let new_features = features.filter(function (d) {
+            let re = predicate(d.properties)
+            return re
+            // (d.properties.subway == true) || (d.tram == true) || (d.train == true)
+        })
+
+        let result = {
+            crs: crs,
+            name: name,
+            type: type,
+            features: new_features
+        };
+
+        // for (key in features) {
+        //     if (features.hasOwnProperty(key) && !predicate(features[key])) {
+        //         result[key] = features[key];
+        //     }
+        // }
+
+        return result;
+    }
 
 return this;
 }
