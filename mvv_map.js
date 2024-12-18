@@ -14,6 +14,7 @@ function MVV_Map () {
         train: false,
         tram: false
     }
+    this.stops;
 
     var projection;
     var pathGenerator;
@@ -44,7 +45,13 @@ function MVV_Map () {
             "translate(" + that.margin.left + "," + that.margin.top + ")")
             .attr("class", "map_content")   
             
-        d3.select(".map_content").append("g").attr("class", "stationen");;
+        // d3.select(".map_content").append("rect").attr("height", that.height).attr("width", that.width).attr("fill", "grey");
+        
+        d3.select(".map_content").append("g").attr("class", "imageGroup");
+        d3.select(".map_content").append("g").attr("class", "stadtteile");
+        d3.select(".map_content").append("g").attr("class", "mapData");
+        d3.select(".map_content").append("g").attr("class", "stationen");
+        d3.select(".map_content").append("line").attr("class", "line").attr("stroke", "red").attr("stroke-width", 3)
             
         d3.select("body").append("div").attr("class", "tooltip")
         tooltip = d3.select(".tooltip");
@@ -74,14 +81,14 @@ function MVV_Map () {
 
 
         //load data
-        var [stops, stops_list] = await this.load_stops();
-        var stadtteile = await this.load_mapData();
+        this.stops = await this.load_stops();
+        var mapData = await this.load_mapData();
     
         //render Stadtteile
         this.addUI()
-        this.addStadtteile(stadtteile);
-        this.addColours(stops_list)
-        this.addPoints(stops)
+        this.addMapData(mapData);
+        this.addColours()
+        this.addPoints()
         this.addMe(me)
     }
 
@@ -97,7 +104,6 @@ function MVV_Map () {
             .attr("type", "checkbox")
             .attr("id", "subway")
             .attr("name", "subway")
-            .attr("value", true)
             .attr("checked", true);
         data_selection.append("label").attr("for", "subway").html("U-Bahn");
         data_selection.append("br");
@@ -107,8 +113,6 @@ function MVV_Map () {
             .attr("type", "checkbox")
             .attr("id", "train")
             .attr("name", "train")
-            // .attr("value", false)
-            // .attr("checked", false);
         data_selection.append("label").attr("for", "train").html("S-Bahn");
         data_selection.append("br");
 
@@ -117,8 +121,6 @@ function MVV_Map () {
             .attr("type", "checkbox")
             .attr("id", "tram")
             .attr("name", "tram")
-            // .attr("value", false)
-            // .attr("checked", false);
         data_selection.append("label").attr("for", "tram").html("Tram");
         data_selection.append("br");
 
@@ -129,9 +131,19 @@ function MVV_Map () {
                 let value = input.property("checked")
                 that.transportChoice[id] = value;
 
-                var [stops, stops_list] = await that.load_stops();
-                that.addColours(stops_list)
-                that.addPoints(stops)
+
+                if(that.transportChoice.subway == false &&
+                    that.transportChoice.train == false &&
+                    that.transportChoice.tram == false)
+                    {
+                        d3.select("image").remove()
+                        d3.selectAll(".station").remove()
+                } else {
+                    that.stops = await that.load_stops();
+                    that.addColours()
+                    that.addPoints()
+                }
+
             })
 
     }
@@ -139,35 +151,43 @@ function MVV_Map () {
 
 
     this.load_stops = async function(){
+        
         var data_choice = this.transportChoice
-        var conditidion = []
+        var condition = []
         Object.keys(data_choice).forEach((key) => {
             if (data_choice[key] == true) {
-                conditidion.push("(d." + key + " == 'yes')")
+                condition.push("(d." + key + " == 'yes')")
             }
         })
-        const predicate = new Function('d', `return ${conditidion.join(" || ")};`);
-        // var stops = d3.tsv("/data/stops.csv", (d) => {
-        var stops = await d3.json("data/osm_stationen.geojson")
-        var filtered = filterOSMProperty(stops, predicate)
-        var points_list = filtered.features.map(p => p.geometry.coordinates)
-        // TODO remove duplicates
-        // return (d.subway == true) || (d.tram == true) || (d.train == true)
-        return [filtered, points_list]
+        if(condition.length > 0) {   
+            var stops = await d3.json("data/osm_stationen.geojson")
+            const predicate = new Function('d', `return ${condition.join(" || ")};`);
+            // var stops = d3.tsv("/data/stops.csv", (d) => {
+            var filtered = filterOSMProperty(stops, predicate)
+            // TODO remove duplicates
+            // return (d.subway == true) || (d.tram == true) || (d.train == true)
+            return filtered
+        }
+        // else {
+        //     return {features:[]};
+        // }
     }
 
 
 
     this.load_mapData = async function(){
         var stadtteile = await d3.json("data/osm_stadtteilgrenzen.geojson")
-        return stadtteile
+        var parks = await d3.json("data/osm_parks.geojson")
+        var wasser = await d3.json("data/osm_wasser.geojson")
+        return [stadtteile, parks, wasser]
     }
     
     
     
-    this.addColours = function (stops_list) {
+    this.addColours = function () {
         var that = this;
-
+        var stops = that.stops;
+        var stops_list = stops.features.map(p => p.geometry.coordinates)
         var stops_list_in_pixel = stops_list.map(d => [xScale(d[0]), yScale(d[1])])
         const delaunay = d3.Delaunay.from(stops_list_in_pixel);
 
@@ -176,15 +196,18 @@ function MVV_Map () {
             for (let x = 0; x < that.width; x++) {
                 // Calculate the distance to each point
                 var index_in_points = delaunay.find(x, y)
+                var name = stops.features[index_in_points].properties.name;
                 var distance = Math.hypot(stops_list_in_pixel[index_in_points][0] - x, stops_list_in_pixel[index_in_points][1] - y);
-                that.distances_per_pixel[y * that.width + x] = distance;
+                that.distances_per_pixel[y * that.width + x] = {dist: distance, name: name, index: index_in_points}
 
             }
         }
 
         //colour scale
-        var maxDistance = Math.max(...that.distances_per_pixel)
-        const colorScale = d3.scaleSequential(d3.interpolateRdYlGn)
+        var dists = that.distances_per_pixel.map(d=>d.dist)
+        var maxDistance = Math.max(...dists)
+        var potenz = 1.4
+        const colorScale = d3.scaleSequential(d3.interpolateRgb("#f0f9e8", "#7bccc4", "#08589e"))
             .domain([0, maxDistance]);
 
         // Create an offscreen canvas for pixel manipulation
@@ -199,7 +222,7 @@ function MVV_Map () {
 
         var pixelIndex = 0;
         for (let i = 0; i < that.distances_per_pixel.length; i++) {
-            const color = d3.color(colorScale(that.distances_per_pixel[i]));
+            const color = d3.color(colorScale(that.distances_per_pixel[i].dist ** potenz));
             // Set the RGBA values
             data[pixelIndex] = color.r;     // Red
             data[pixelIndex + 1] = color.g; // Green
@@ -217,7 +240,7 @@ function MVV_Map () {
 
         const image = new Image();
         image.onload = function () {
-            d3.select(".map_content").selectAll("image")
+            d3.select(".imageGroup").selectAll("image")
                 .data([""])
                 .join("image")
                 .attr("x", 0)
@@ -229,30 +252,45 @@ function MVV_Map () {
                 .on("mouseover", function (event, d) {
                     tooltip.style("visibility", "visible")
                     // .text((event.x - that.margin.left) + ", " + (event.y - that.margin.top));
+                    d3.select(".line")
+                        .style("visibility", "visible")
                 })
                 .on("mousemove", function (event, d) {
+                    var index = (event.pageY - that.margin.top) * that.width + (event.pageX - that.margin.left)
+                    var pixel = that.distances_per_pixel[index]
                     tooltip
-                    .text((event.x - that.margin.left) + ", " + (event.y - that.margin.top) + ", "
-                     + Math.round(10*(that.distances_per_pixel[(event.y - that.margin.top) * that.width + (event.x - that.margin.left)]))/10)
-                    .style("top", (event.pageY - 10) + "px")
-                    .style("left", (event.pageX + 10) + "px");
+                        .html(
+                            "closest station: " + pixel.name
+                            //  + ", <br> distance: " + Math.round(10*(pixel.dist))/10 
+                        )
+                        .style("top", (event.pageY - 10) + "px")
+                        .style("left", (event.pageX + 10) + "px");
+
+                    d3.select(".line")
+                        .attr("x1", xScale(that.stops.features[pixel.index].geometry.coordinates[0]))
+                        .attr("y1", yScale(that.stops.features[pixel.index].geometry.coordinates[1]))
+                        .attr("x2", (event.pageX - that.margin.left))
+                        .attr("y2", (event.pageY - that.margin.top))
+
+                    
                 })
                 .on("mouseout", function (event, d) {
-                    tooltip.style("visibility", "hidden");
+                    // tooltip.style("visibility", "hidden");
+                    // d3.select(".line").style("visibility", "hidden")
                 })
-                .lower();
+                // .lower();
         };
         image.src = canvas.toDataURL();
     }
 
     
-    this.addPoints = function(data_points) {
-        
-
+    this.addPoints = function() {
+        var data_points = this.stops
         // Draw each borough as a path
         d3.select(".stationen").selectAll("path")
             .data(data_points.features)
             .join("path")
+            .attr("class", "station")
             .attr("d", pathGenerator.pointRadius(3))
             // .attr("d", pathGenerator)
             .attr("fill", (d) => {
@@ -287,7 +325,8 @@ function MVV_Map () {
                     }  
                 });
                 tooltip.style("visibility", "hidden");
-            });
+            })
+            .raise();
             
     }
 
@@ -306,22 +345,64 @@ function MVV_Map () {
 
 
 
-    this.addStadtteile = function(stadtteile) {
-            // console.log("center: " + projection.center())
-            // console.log("scale: " + projection.scale())
-            // console.log("translate: " + projection.translate())
-            // console.log("clipExtent: " + projection.clipExtent())
-    
-            const boroughsGroup = d3.select(".map_content").append("g").attr("class", "boroughs");
+    this.addMapData = function(mapData) {
+        let parks = mapData[1]
+        // Draw each borough as a path
+        d3.select(".mapData").selectAll(".park")
+            .data(parks.features)
+            .join("path")
+            .attr("class", "park")
+            .attr("d", (d) => {
+                let path = pathGenerator(d)
+                if(path && ((path.match(/Z/g) || []).length > 1) ) {
+                    return path.split("Z")[1]
+                }   
+            })
+            .attr("fill", "ForestGreen")
+            .attr("stroke", "none")
+            .attr("opacity", 0.6)
 
-            // Draw each borough as a path
-            boroughsGroup.selectAll("path")
-                .data(stadtteile.features)
-                .join("path")
-                .attr("d", pathGenerator)
-                // .attr("d", pathGenerator)
-                .attr("fill", "none") // No fill by default
-                .attr("stroke", "black") // Borough boundaries
+        var wasser = mapData[2]
+        // Draw each borough as a path
+        d3.select(".mapData").selectAll(".wasser")
+            .data(wasser.features)
+            .join("path")
+            .attr("class", "wasser")
+            .attr("d", (d, i) => {
+                let path = pathGenerator(d)
+                if(path && ((path.match(/Z/g) || []).length > 1) ) {
+                    return path.split("Z")[1]
+                }
+            })
+            // .attr("d", pathGenerator)
+            .attr("fill", "none")
+            .attr("stroke", "blue")
+            .attr("opacity", 0.6)
+
+        var stadtteile = mapData[0]
+        // Draw each borough as a path
+        d3.select(".stadtteile").selectAll(".borough")
+            .data(stadtteile.features)
+            .join("path")
+            .attr("class", "borough")
+            // .attr("d", (d) => {
+            //     let path = pathGenerator(d)
+            //     if(path) {
+            //         return path.split("Z")[1]
+            //     }
+                
+            // })
+            .attr("d", pathGenerator)
+            .attr("fill", "none") // No fill by default
+            .attr("stroke", "#63391d") // Borough boundaries
+            .attr("stroke-width", 1.3)
+
+        
+  
+
+
+
+            
 
     }
 
