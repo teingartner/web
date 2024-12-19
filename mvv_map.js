@@ -14,9 +14,16 @@ function MVV_Map () {
         train: false,
         tram: false
     }
+    // data
     this.stops;
-
+    this.stadtteile;
+    this.parks;
+    this.wasser;
+    
     var projection;
+    this.projScale;
+    var lonBbx;
+    var latBbx;
     var pathGenerator;
 
     var colours = {
@@ -71,9 +78,10 @@ function MVV_Map () {
 
 
         // add projection
+        this.projScale = 120000;
         projection = d3.geoMercator()
             .center(that.center)
-            .scale(120000)
+            .scale(this.projScale)
             .translate([ that.width/2, that.height/2 ])
             .clipExtent([[0,0], [width, height]])
 
@@ -81,8 +89,8 @@ function MVV_Map () {
         
         let pointul = projection.invert([0,0])
         let pointlr = projection.invert([that.width, that.height])
-        var lonBbx = [pointul[0], pointlr[0]]
-        var latBbx = [pointlr[1], pointul[1]]
+        lonBbx = [pointul[0], pointlr[0]]
+        latBbx = [pointlr[1], pointul[1]]
 
         yScale
             .domain(latBbx) //latitude
@@ -93,17 +101,89 @@ function MVV_Map () {
             .range([0, that.width]);
 
 
+        // d3.select(".map_content")
+        //     .on("mouseover", function (event, d) {
+        //         tooltip.style("visibility", "visible")
+        //         .text((event.x - that.margin.left) + ", " + (event.y - that.margin.top));
+        //         d3.select(".line")
+        //             .style("visibility", "visible")
+        //     })
+        //     .on("mousemove", function (event, d) {
+        //         var index = (event.pageY - that.margin.top) * that.width + (event.pageX - that.margin.left)
+        //         var pixel = that.distances_per_pixel[index]
+        //         if(pixel) {
+        //             tooltip
+        //                 .html(
+        //                     "closest station: " + pixel.name
+        //                     //  + ", <br> distance: " + Math.round(10*(pixel.dist))/10 
+        //                 )
+        //                 .style("top", (event.pageY - 10) + "px")
+        //                 .style("left", (event.pageX + 10) + "px")
+        //                 .style("visibility", "visible");
+
+        //             d3.select(".line")
+        //                 .attr("x1", xScale(that.stops.features[pixel.index].geometry.coordinates[0]))
+        //                 .attr("y1", yScale(that.stops.features[pixel.index].geometry.coordinates[1]))
+        //                 .attr("x2", (event.pageX - that.margin.left) + 2)
+        //                 .attr("y2", (event.pageY - that.margin.top) + 2)
+        //                 .style("visibility", "visible");
+        //         }
+        //     })
+        //     .on("mouseout", function (event, d) {
+        //             let new_object = d3.select(event.relatedTarget)
+        //             if( new_object._groups[0][0] && new_object.attr("class") != "line" ) {
+        //                 tooltip.style("visibility", "hidden");
+        //                 d3.select(".line").style("visibility", "hidden")
+        //             }
+        //     })
+
+
+            d3.select(".map_content").call(
+                d3.zoom()
+                .scaleExtent([1, 8]) // Set the zoom scale extent
+                .on("zoom", function(event) {
+                    d3.select(this)
+                        .attr("transform", event.transform);
+                    })
+            );
+
+            
+
+            // .call(d3.zoom().on('zoom', async function(d){
+            //     that.projScale += 100*d.sourceEvent.wheelDelta
+            //     projection.scale(that.projScale)
+
+            //     let pointul = projection.invert([0,0])
+            //     let pointlr = projection.invert([that.width, that.height])
+            //     lonBbx = [pointul[0], pointlr[0]]
+            //     latBbx = [pointlr[1], pointul[1]]
+
+            //     yScale.domain(latBbx);
+            //     xScale.domain(lonBbx);
+
+            //     await that.addMapData();
+            //     that.addColours()
+            //     that.addPoints()
+            //     that.addMe(me)
+            // }))
+            
+
 
 
         //load data
         this.stops = await this.load_stops();
+        var [stadtteile, parks, wasser] = await this.load_mapData();
+        this.stadtteile = rewind(stadtteile, true)
+        this.parks = rewind(parks, true)
+        this.wasser = rewind(wasser, true)
     
         //render Stadtteile
         this.addUI()
-        await this.addMapData();
+        this.addMapData();
         this.addColours()
         this.addPoints()
-        this.addMe(me)
+
+
     }
 
     this.addUI = function() {
@@ -160,6 +240,32 @@ function MVV_Map () {
 
             })
 
+        // Add event listener to the button
+        document.getElementById("geocode-button").addEventListener("click", handleGeocode);
+
+        // Add event listener to the input field for the Enter key
+        document.getElementById("address").addEventListener("keydown", function(event) {
+            if (event.key === "Enter") {
+                handleGeocode();
+            }
+        });
+
+        // Function to handle adding the point to the map
+        async function handleGeocode() {
+            const address = document.getElementById("address").value;
+            try {
+                if(address == "") {
+                    d3.select(".me").remove()
+                } else {
+                    const coordinates = await getCoordinates(address);
+                    // Add the point to the map
+                    that.addMe(coordinates);
+                }
+            } catch (error) {
+                alert(error.message);
+            }
+        }
+
     }
 
 
@@ -185,6 +291,13 @@ function MVV_Map () {
         // else {
         //     return {features:[]};
         // }
+    }
+
+    this.load_mapData = async function(){
+        var stadtteile = await d3.json("data/osm_stadtteilgrenzen.geojson")
+        var parks = await d3.json("data/osm_parks.geojson")
+        var wasser = await d3.json("data/osm_wasser.geojson")
+        return [stadtteile, parks, wasser]
     }
 
     
@@ -255,47 +368,6 @@ function MVV_Map () {
                 .attr("height", height)
                 .attr("href", image.src)
                 .style("opacity", 0.8)
-                .on("mouseover", function (event, d) {
-                    tooltip.style("visibility", "visible")
-                    // .text((event.x - that.margin.left) + ", " + (event.y - that.margin.top));
-                    d3.select(".line")
-                        .style("visibility", "visible")
-                })
-                .on("mousemove", function (event, d) {
-                    var index = (event.pageY - that.margin.top) * that.width + (event.pageX - that.margin.left)
-                    var pixel = that.distances_per_pixel[index]
-                    tooltip
-                        .html(
-                            "closest station: " + pixel.name
-                            //  + ", <br> distance: " + Math.round(10*(pixel.dist))/10 
-                        )
-                        .style("top", (event.pageY - 10) + "px")
-                        .style("left", (event.pageX + 10) + "px")
-                        .style("visibility", "visible");
-
-                    d3.select(".line")
-                        .attr("x1", xScale(that.stops.features[pixel.index].geometry.coordinates[0]))
-                        .attr("y1", yScale(that.stops.features[pixel.index].geometry.coordinates[1]))
-                        .attr("x2", (event.pageX - that.margin.left) + 2)
-                        .attr("y2", (event.pageY - that.margin.top) + 2)
-                        .style("visibility", "visible");
-
-                    
-                })
-                .on("mouseout", function (event, d) {
-                    let new_object = d3.select(event.relatedTarget)
-                    if( new_object._groups[0][0] && new_object.attr("class") != "line" ) {
-                        tooltip.style("visibility", "hidden");
-                        d3.select(".line").style("visibility", "hidden")
-                    }
-                })
-
-            d3.select("html")
-                .on("mouseover", function (event, d) {
-                    tooltip.style("visibility", "hidden");
-                    d3.select(".line").style("visibility", "hidden")
-                })
-                // .lower();
         };
         image.src = canvas.toDataURL();
     }
@@ -358,14 +430,26 @@ function MVV_Map () {
             .attr("fill", "pink");
     }
 
-    this.addMapData = async function() {
+    
+
+    async function getCoordinates(address) {
+        const response = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(address)}`);
+        const data = await response.json();
+        if (data.length > 0) {
+            return {
+                lat: parseFloat(data[0].lat),
+                lon: parseFloat(data[0].lon)
+            };
+        } else {
+            throw new Error("Address not found");
+        }
+    }
+
+    this.addMapData = function() {
         var that = this;
-        
-        
-        var parks = await d3.json("data/osm_parks.geojson")
-        parks = rewind(parks, true)
+
         d3.select(".greenery").selectAll(".park")
-            .data(parks.features)
+            .data(that.parks.features)
             .join("path")
             .attr("class", "park")
             .attr("d", pathGenerator)
@@ -373,10 +457,8 @@ function MVV_Map () {
             .attr("stroke", "none")
             .attr("opacity", 0.7)
 
-        var wasser = await d3.json("data/osm_wasser.geojson")
-        wasser = rewind(wasser, true)
         d3.select(".water").selectAll(".wasser")
-            .data(wasser.features)
+            .data(that.wasser.features)
             .join("path")
             .attr("class", "wasser")
             .attr("d", pathGenerator)
@@ -385,11 +467,8 @@ function MVV_Map () {
             .attr("stroke-width", 0.5)
             .attr("opacity", 0.8)
 
-        // Draw each borough as a path
-        var stadtteile = await d3.json("data/osm_stadtteilgrenzen.geojson")
-        stadtteile = rewind(stadtteile, true)
         d3.select(".boroughs").selectAll(".borough")
-            .data(stadtteile.features)
+            .data(that.stadtteile.features)
             .join("path")
             .attr("class", "borough")
             .attr("d", pathGenerator)
