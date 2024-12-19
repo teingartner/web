@@ -19,6 +19,14 @@ function MVV_Map () {
     var projection;
     var pathGenerator;
 
+    var colours = {
+        subway: "#2863A6",
+        train: "#009D41",
+        tram: "#E62D26",
+        parks: "#92ce7e",
+        wasser: "#6683B0"
+    }
+
     var xScale = d3.scaleLinear()
     var yScale = d3.scaleLinear()
 
@@ -49,7 +57,12 @@ function MVV_Map () {
         
         d3.select(".map_content").append("g").attr("class", "imageGroup");
         d3.select(".map_content").append("g").attr("class", "stadtteile");
+
         d3.select(".map_content").append("g").attr("class", "mapData");
+        d3.select(".mapData").append("g").attr("class", "boroughs");
+        d3.select(".mapData").append("g").attr("class", "greenery");
+        d3.select(".mapData").append("g").attr("class", "water");
+
         d3.select(".map_content").append("g").attr("class", "stationen");
         d3.select(".map_content").append("line").attr("class", "line").attr("stroke", "red").attr("stroke-width", 3)
             
@@ -80,13 +93,14 @@ function MVV_Map () {
             .range([0, that.width]);
 
 
+
+
         //load data
         this.stops = await this.load_stops();
-        var mapData = await this.load_mapData();
     
         //render Stadtteile
         this.addUI()
-        this.addMapData(mapData);
+        await this.addMapData();
         this.addColours()
         this.addPoints()
         this.addMe(me)
@@ -173,16 +187,6 @@ function MVV_Map () {
         // }
     }
 
-
-
-    this.load_mapData = async function(){
-        var stadtteile = await d3.json("data/osm_stadtteilgrenzen.geojson")
-        var parks = await d3.json("data/osm_parks.geojson")
-        var wasser = await d3.json("data/osm_wasser.geojson")
-        return [stadtteile, parks, wasser]
-    }
-    
-    
     
     this.addColours = function () {
         var that = this;
@@ -206,9 +210,11 @@ function MVV_Map () {
         //colour scale
         var dists = that.distances_per_pixel.map(d=>d.dist)
         var maxDistance = Math.max(...dists)
-        var potenz = 1.4
-        const colorScale = d3.scaleSequential(d3.interpolateRgb("#f0f9e8", "#7bccc4", "#08589e"))
-            .domain([0, maxDistance]);
+        var potenz = 0.5
+        // const colorScale = d3.scaleSequential(d3.interpolateRgb("#f0f9e8", "#7bccc4", "#08589e"))
+        // const colorScale = d3.scaleSequential(d3.interpolateRgb("white", "black"))
+        const colorScale = d3.scaleSequential(d3.interpolateRgb("#f5b53d", "#1919b3"))
+            .domain([0, maxDistance ** potenz]);
 
         // Create an offscreen canvas for pixel manipulation
         const canvas = document.createElement("canvas");
@@ -248,7 +254,7 @@ function MVV_Map () {
                 .attr("width", width)
                 .attr("height", height)
                 .attr("href", image.src)
-                .style("opacity", 0.9)
+                .style("opacity", 0.8)
                 .on("mouseover", function (event, d) {
                     tooltip.style("visibility", "visible")
                     // .text((event.x - that.margin.left) + ", " + (event.y - that.margin.top));
@@ -264,19 +270,30 @@ function MVV_Map () {
                             //  + ", <br> distance: " + Math.round(10*(pixel.dist))/10 
                         )
                         .style("top", (event.pageY - 10) + "px")
-                        .style("left", (event.pageX + 10) + "px");
+                        .style("left", (event.pageX + 10) + "px")
+                        .style("visibility", "visible");
 
                     d3.select(".line")
                         .attr("x1", xScale(that.stops.features[pixel.index].geometry.coordinates[0]))
                         .attr("y1", yScale(that.stops.features[pixel.index].geometry.coordinates[1]))
-                        .attr("x2", (event.pageX - that.margin.left))
-                        .attr("y2", (event.pageY - that.margin.top))
+                        .attr("x2", (event.pageX - that.margin.left) + 2)
+                        .attr("y2", (event.pageY - that.margin.top) + 2)
+                        .style("visibility", "visible");
 
                     
                 })
                 .on("mouseout", function (event, d) {
-                    // tooltip.style("visibility", "hidden");
-                    // d3.select(".line").style("visibility", "hidden")
+                    let new_object = d3.select(event.relatedTarget)
+                    if( new_object._groups[0][0] && new_object.attr("class") != "line" ) {
+                        tooltip.style("visibility", "hidden");
+                        d3.select(".line").style("visibility", "hidden")
+                    }
+                })
+
+            d3.select("html")
+                .on("mouseover", function (event, d) {
+                    tooltip.style("visibility", "hidden");
+                    d3.select(".line").style("visibility", "hidden")
                 })
                 // .lower();
         };
@@ -295,13 +312,13 @@ function MVV_Map () {
             // .attr("d", pathGenerator)
             .attr("fill", (d) => {
                 if (d.properties.subway == "yes") {
-                    return "blue"
+                    return colours.subway
                 }
                 else if (d.properties.train == "yes") {
-                    return "green"
+                    return colours.train
                 }
                 else if (d.properties.tram == "yes") {
-                    return "red"
+                    return colours.tram
                 }  
             })
             .on("mouseover", function (event, d) {
@@ -315,13 +332,13 @@ function MVV_Map () {
             .on("mouseout", function (event, d) {
                 d3.select(this).attr("fill", (d) => {
                     if (d.properties.subway == "yes") {
-                        return "blue"
+                        return colours.subway
                     }
-                    else if (d.properties.subway == "yes") {
-                        return "green"
+                    else if (d.properties.train == "yes") {
+                        return colours.train
                     }
                     else if (d.properties.tram == "yes") {
-                        return "red"
+                        return colours.tram
                     }  
                 });
                 tooltip.style("visibility", "hidden");
@@ -341,68 +358,45 @@ function MVV_Map () {
             .attr("fill", "pink");
     }
 
-
-
-
-
-    this.addMapData = function(mapData) {
-        let parks = mapData[1]
-        // Draw each borough as a path
-        d3.select(".mapData").selectAll(".park")
+    this.addMapData = async function() {
+        var that = this;
+        
+        
+        var parks = await d3.json("data/osm_parks.geojson")
+        parks = rewind(parks, true)
+        d3.select(".greenery").selectAll(".park")
             .data(parks.features)
             .join("path")
             .attr("class", "park")
-            .attr("d", (d) => {
-                let path = pathGenerator(d)
-                if(path && ((path.match(/Z/g) || []).length > 1) ) {
-                    return path.split("Z")[1]
-                }   
-            })
-            .attr("fill", "ForestGreen")
+            .attr("d", pathGenerator)
+            .attr("fill", colours.parks)
             .attr("stroke", "none")
-            .attr("opacity", 0.6)
+            .attr("opacity", 0.7)
 
-        var wasser = mapData[2]
-        // Draw each borough as a path
-        d3.select(".mapData").selectAll(".wasser")
+        var wasser = await d3.json("data/osm_wasser.geojson")
+        wasser = rewind(wasser, true)
+        d3.select(".water").selectAll(".wasser")
             .data(wasser.features)
             .join("path")
             .attr("class", "wasser")
-            .attr("d", (d, i) => {
-                let path = pathGenerator(d)
-                if(path && ((path.match(/Z/g) || []).length > 1) ) {
-                    return path.split("Z")[1]
-                }
-            })
-            // .attr("d", pathGenerator)
-            .attr("fill", "none")
-            .attr("stroke", "blue")
-            .attr("opacity", 0.6)
+            .attr("d", pathGenerator)
+            .attr("fill", colours.wasser)
+            .attr("stroke", colours.wasser)
+            .attr("stroke-width", 0.5)
+            .attr("opacity", 0.8)
 
-        var stadtteile = mapData[0]
         // Draw each borough as a path
-        d3.select(".stadtteile").selectAll(".borough")
+        var stadtteile = await d3.json("data/osm_stadtteilgrenzen.geojson")
+        stadtteile = rewind(stadtteile, true)
+        d3.select(".boroughs").selectAll(".borough")
             .data(stadtteile.features)
             .join("path")
             .attr("class", "borough")
-            // .attr("d", (d) => {
-            //     let path = pathGenerator(d)
-            //     if(path) {
-            //         return path.split("Z")[1]
-            //     }
-                
-            // })
             .attr("d", pathGenerator)
-            .attr("fill", "none") // No fill by default
-            .attr("stroke", "#63391d") // Borough boundaries
+            .attr("fill", "none")
+            .attr("stroke", "#63391d")
             .attr("stroke-width", 1.3)
 
-        
-  
-
-
-
-            
 
     }
 
