@@ -41,7 +41,7 @@ function MVV_Map () {
     var xScale = d3.scaleLinear()
     var yScale = d3.scaleLinear()
 
-    const marienplatz = { lat: 48.137154, lon: 11.576124 }; // Coordinates for Marienplatz
+    var marienplatz = { lat: 48.137154, lon: 11.576124 }; // Coordinates for Marienplatz
 
     
 
@@ -106,7 +106,13 @@ function MVV_Map () {
             .range([0, that.width]);
 
 
-        // d3.select(".map_content")
+        d3.select(".map_content")
+            .on("click", function(event) {
+                let coords = projection.invert([event.pageX - that.margin.left, event.pageY - that.margin.top]);
+                that.me = {lon: coords[0], lat: coords[1]}
+                that.addMe();
+                that.updateChart();
+            })
         //     .on("mouseover", function (event, d) {
         //         tooltip.style("visibility", "visible")
         //         .text((event.x - that.margin.left) + ", " + (event.y - that.margin.top));
@@ -143,14 +149,14 @@ function MVV_Map () {
         //     })
 
 
-            d3.select(".map_content").call(
-                d3.zoom()
-                .scaleExtent([1, 8]) // Set the zoom scale extent
-                .on("zoom", function(event) {
-                    d3.select(this)
-                        .attr("transform", event.transform);
-                    })
-            );
+            // d3.select(".map_content").call(
+            //     d3.zoom()
+            //     .scaleExtent([1, 8]) // Set the zoom scale extent
+            //     .on("zoom", function(event) {
+            //         d3.select(this)
+            //             .attr("transform", event.transform);
+            //         })
+            // );
 
             
 
@@ -172,7 +178,9 @@ function MVV_Map () {
             //     that.addMe(me)
             // }))
             
-
+        marienplatz.x = xScale(marienplatz.lon)
+        marienplatz.y = yScale(marienplatz.lat)
+        marienplatz.imageIndex = Math.round(marienplatz.y) * that.width + Math.round(marienplatz.x)
 
 
         //load data
@@ -188,7 +196,7 @@ function MVV_Map () {
         this.addColours()
         this.addPoints()
         that.addMe();
-        that.addHistogram();
+        that.updateChart();
 
       
 
@@ -258,7 +266,7 @@ function MVV_Map () {
                     that.stops = await that.load_stops();
                     that.addColours()
                     that.addPoints()
-                    that.addHistogram()
+                    that.updateChart()
                 }
 
             })
@@ -298,8 +306,7 @@ function MVV_Map () {
                     this.me = coordinates;
                     // Add the point to the map
                     that.addMe();
-                    that.addHistogram();
-                    that.addHistogram();
+                    that.updateChart();
                 }
             } catch (error) {
                 alert(error.message);
@@ -324,8 +331,6 @@ function MVV_Map () {
             const predicate = new Function('d', `return ${condition.join(" || ")};`);
             // var stops = d3.tsv("/data/stops.csv", (d) => {
             var filtered = filterOSMProperty(stops, predicate)
-            // TODO remove duplicates
-            // return (d.subway == true) || (d.tram == true) || (d.train == true)
             return filtered
         }
         // else {
@@ -340,8 +345,7 @@ function MVV_Map () {
         return [stadtteile, parks, wasser]
     }
 
-    
-    this.addColours = function () {
+    this.computePixelData = function() {
         var that = this;
         var stops = that.stops;
         var stops_list = stops.features.map(p => p.geometry.coordinates)
@@ -350,34 +354,39 @@ function MVV_Map () {
 
         // Iterate over each pixel
         for (let y = 0; y < that.height; y++) {
+            var lat = yScale.invert(y)
             for (let x = 0; x < that.width; x++) {
+                var lon = xScale.invert(x)
+
                 // Calculate the distance to each point
                 var index_in_points = delaunay.find(x, y)
                 var name = stops.features[index_in_points].properties.name;
-                var distance = Math.hypot(stops_list_in_pixel[index_in_points][0] - x, stops_list_in_pixel[index_in_points][1] - y);
+                // var distance = Math.hypot(stops_list_in_pixel[index_in_points][0] - x, stops_list_in_pixel[index_in_points][1] - y);
+                var distance = pixelDistance({x: x, y: y}, {x: stops_list_in_pixel[index_in_points][0], y: stops_list_in_pixel[index_in_points][1]})
+                var dist_to_marienplatz = pixelDistance({x: x, y: y}, marienplatz)
+
                 that.distances_per_pixel[y * that.width + x] = {
                     dist: distance,
                     name: name,
-                    index: index_in_points,
+                    index_to_station: index_in_points,
                     x: x,
                     y: y,
                     imageIndex: y * that.width + x,
-                    lat: yScale.invert(y),
-                    lon: xScale.invert(x)
+                    lon: lon,
+                    lat: lat,
+                    dist_to_marienplatz: dist_to_marienplatz
                 }
 
             }
         }
+    }
 
-        // //colour scale
-        // var dists = that.distances_per_pixel.map(d=>d.dist)
-        // var maxDistance = Math.max(...dists)
-        var potenz = 0.5
-        // // const colorScale = d3.scaleSequential(d3.interpolateRgb("#f0f9e8", "#7bccc4", "#08589e"))
-        // // const colorScale = d3.scaleSequential(d3.interpolateRgb("white", "black"))
-        // const colorScale = d3.scaleSequential(d3.interpolateRgb("#f5b53d", "#1919b3"))
-        //     .domain([0, maxDistance ** potenz]);
-        var colorScale = that.getColourScale()
+    
+    this.addColours = function () {
+        var that = this;
+
+        that.computePixelData()
+        var [colorScale, potenz] = that.getColourScale()
 
         // Create an offscreen canvas for pixel manipulation
         const canvas = document.createElement("canvas");
@@ -400,12 +409,9 @@ function MVV_Map () {
             pixelIndex += 4;
         }
 
-        let i = 3;
 
         // // Put the image data back into the canvas
         ctx.putImageData(imageData, 0, 0);
-
-        // d3.select("image").remove()
 
         const image = new Image();
         image.onload = function () {
@@ -496,7 +502,7 @@ function MVV_Map () {
         // const colorScale = d3.scaleSequential(d3.interpolateRgb("white", "black"))
         const colorScale = d3.scaleSequential(d3.interpolateRgb("#f5b53d", "#1919b3"))
             .domain([0, maxDistance ** potenz]);
-        return colorScale
+        return [colorScale, potenz]
     }
     
 
@@ -525,38 +531,26 @@ function MVV_Map () {
     }
 
     this.getDistancesPerPixelForSameDistanceToMarienplatz = function(targetDistance) {
-        var that = this;
         const result = [];
         
         this.distances_per_pixel.forEach((pixel) => {
-            const pixelCoords = {
-                lat: pixel.lat,
-                lon: pixel.lon
-            };
     
-            const distanceToMarienplatz = haversineDistance(pixelCoords, marienplatz);
-    
-            if (Math.abs(distanceToMarienplatz - targetDistance) < 0.02) { // Adjust the tolerance as needed
-                pixel.theta = calculateTheta(pixelCoords, marienplatz)
+            if (Math.abs(pixel.dist_to_marienplatz - targetDistance) < 0.5) { // Adjust the tolerance as needed
+                const deltaX = pixel.lon - marienplatz.lon;
+                const deltaY = pixel.lat - marienplatz.lat;               
+                pixel.theta = Math.atan2(deltaY, deltaX);
                 result.push(pixel);
             }
-
         });
 
-        
-        function calculateTheta(point, center) { 
-            const deltaX = point.lon - center.lon;
-            const deltaY = point.lat - center.lat;
-            return Math.atan2(deltaY, deltaX);
-        }
     
         return result;
     }
 
-    this.addHistogram = function() {
+    this.updateChart = function() {
         var that = this;
         var me = this.me;
-        var distanceToMarienplatz = haversineDistance(me, marienplatz);
+        var distanceToMarienplatz = pixelDistance(me, marienplatz);
         const pointsWithSameDistance = this.getDistancesPerPixelForSameDistanceToMarienplatz(distanceToMarienplatz);
         pointsWithSameDistance.sort((a, b) => a.theta - b.theta);
         
@@ -594,7 +588,6 @@ function MVV_Map () {
             .attr("class", "y-axis")
             .call(d3.axisLeft(y));
 
-        var colorScale = this.getColourScale();
 
         const area = d3.area()
             .x(d => x(d.theta))
@@ -602,14 +595,17 @@ function MVV_Map () {
             .y1(d => y(d.dist))
             // .curve(d3.curveBasis); // Use a smoothing curve
 
+        // add circle around marienplatz
         d3.select(".circle_points").selectAll(".histogram_circle")
-            .data(pointsWithSameDistance)
+            .data([distanceToMarienplatz])
             .join("circle")
             .attr("class", "histogram_circle")
-            .attr("cx", d => d.x)
-            .attr("cy", d => d.y)
-            .attr("r", 1)
-            .attr("fill", "grey");
+            .attr("cx", marienplatz.x)
+            .attr("cy", marienplatz.y)
+            .attr("r", pixelDistance(me, marienplatz))
+            .attr("stroke", "grey")
+            .attr("stroke-width", "2")
+            .attr("fill", "none")
 
         svg.selectAll(".area")
             .data([""])
@@ -630,19 +626,34 @@ function MVV_Map () {
                     .attr("visibility", "hidden")
                 
 
-                d3.selectAll(".histogram_circle")
+                d3.selectAll(".highlight_point")
+                    .attr("visibility", "hidden")
                     .transition()
                     .duration(100)
-                    .attr("fill", "grey")
-                    .attr("r", 1)
+                    .attr("r", 0)
             });
 
 
         svg.select(".area")
             .on("mousemove", function (event, d) {
-                let pixel= d3.selectAll(".histogram_circle").filter(e => Math.abs(e.theta - x.invert(event.layerX)) < 0.03).data()[0]
-                    
+                let pixel = pointsWithSameDistance.filter(e => Math.abs(e.theta - x.invert(event.layerX)) < 0.01)[0];
+                console.log(event)
                 if(pixel) {
+                    d3.select(".circle_points")
+                        .selectAll(".highlight_point")
+                        .data([pixel])
+                        .join("circle")
+                        .attr("class", "highlight_point")
+                        .attr("cx", pixel.x)
+                        .attr("cy", pixel.y)
+                        .attr("fill", "black")
+                            .transition()
+                            .duration(100)
+                        .attr("r", 4)
+                        .attr("visibility", "visible")
+                    
+                    
+                
                     d3.selectAll(".highlight_line")
                         .data([pixel])
                         .join("line")
@@ -651,21 +662,7 @@ function MVV_Map () {
                         .attr("x2", event.layerX)
                         .attr("y2", d => y(d.dist))
 
-                    let imageIndex = pixel.imageIndex
-                    d3.selectAll(".histogram_circle")
-                            .filter(e => e.imageIndex === imageIndex)
-                            .raise()
-                            .transition()
-                            .duration(100)
-                            .attr("fill", "black")
-                            .attr("r", 6)
-
-                    d3.selectAll(".histogram_circle")
-                                .filter(e => e.imageIndex != imageIndex)
-                                .transition()
-                                .duration(100)
-                                .attr("fill", "grey")
-                                .attr("r", 1)
+                
                 }
             })
             .on("mouseout", function (event, d) {
@@ -675,11 +672,10 @@ function MVV_Map () {
                             .attr("visibility", "hidden")
                         
 
-                        d3.selectAll(".histogram_circle")
+                        d3.select(".highlight_point")
                             .transition()
                             .duration(100)
-                            .attr("fill", "grey")
-                            .attr("r", 0.9)
+                            .attr("r", 0)
                    }
             });
 
@@ -698,7 +694,7 @@ function MVV_Map () {
 
 
         // highlight me in histogram
-        let me_data= d3.selectAll(".histogram_circle").filter(e => e.imageIndex === me.imageIndex).data()[0]
+        let me_data= pointsWithSameDistance.filter(e => e.imageIndex === me.imageIndex)[0]
         svg.selectAll(".me_histogram")
             .data([me_data])
             .join("line")
@@ -749,7 +745,7 @@ function MVV_Map () {
     }
 
     
-    function filterOSMProperty( obj, predicate) {
+    function filterOSMProperty(obj, predicate) {
         let crs = obj.crs
         let name = obj.name
         let type = obj.type
@@ -797,6 +793,12 @@ function MVV_Map () {
         const R = 6371; // Radius of the Earth in kilometers
         return R * c; // Distance in kilometers
     }
+
+    function pixelDistance(p1, p2) {
+        return Math.hypot(p1.x - p2.x, p1.y - p2.y)
+    }
+
+
 
 return this;
 }
