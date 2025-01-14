@@ -23,6 +23,7 @@ function MVV_Map () {
     this.stadtteile;
     this.parks;
     this.wasser;
+    this.strassen;
     
     var projection;
     this.projScale;
@@ -42,6 +43,11 @@ function MVV_Map () {
     var yScale = d3.scaleLinear()
 
     var marienplatz = { lat: 48.137154, lon: 11.576124 }; // Coordinates for Marienplatz
+
+    // add chart for distances
+    const chart_margin = { top: 20, right: 30, bottom: 40, left: 40 };
+    const chart_width = 400 - chart_margin.left - chart_margin.right;
+    const chart_height = 200 - chart_margin.top - chart_margin.bottom;
 
     
 
@@ -70,9 +76,10 @@ function MVV_Map () {
         d3.select(".map_content").append("g").attr("class", "stadtteile");
 
         d3.select(".map_content").append("g").attr("class", "mapData");
-        d3.select(".mapData").append("g").attr("class", "greenery");
+        d3.select(".mapData").append("g").attr("class", "greenery").attr("opacity", 0.7);
         d3.select(".mapData").append("g").attr("class", "water");
         d3.select(".mapData").append("g").attr("class", "boroughs");
+        d3.select(".mapData").append("g").attr("class", "strassen");
         d3.select(".mapData").append("g").attr("class", "circle_points");
 
         d3.select(".map_content").append("g").attr("class", "stationen");
@@ -88,7 +95,7 @@ function MVV_Map () {
             .center(that.center)
             .scale(this.projScale)
             .translate([ that.width/2, that.height/2 ])
-            .clipExtent([[0,0], [width, height]])
+            .clipExtent([[0,0], [that.width, that.height]])
 
         pathGenerator = d3.geoPath().projection(projection);
         
@@ -109,9 +116,12 @@ function MVV_Map () {
         d3.select(".map_content")
             .on("click", function(event) {
                 let coords = projection.invert([event.pageX - that.margin.left, event.pageY - that.margin.top]);
-                that.me = {lon: coords[0], lat: coords[1]}
+                const coordinates = {lon: coords[0], lat: coords[1]}
+                that.me = coordinates
+                let pixel = distances_per_pixel[Math.round(yScale(coordinates.lat)) * that.width + Math.round(xScale(coordinates.lon))]
                 that.addMe();
                 that.updateChart();
+                that.addInfoToUI(pixel);
             })
         //     .on("mouseover", function (event, d) {
         //         tooltip.style("visibility", "visible")
@@ -177,7 +187,33 @@ function MVV_Map () {
             //     that.addPoints()
             //     that.addMe(me)
             // }))
-            
+        this.addUI()
+
+
+
+        d3.select("body")
+            .append("svg")
+            .attr("class", "histogram")
+            .attr("width", chart_width + chart_margin.left + chart_margin.right)
+            .attr("height", chart_height + chart_margin.top + chart_margin.bottom)
+            .append("g")
+                .attr("transform", `translate(${chart_margin.left},${chart_margin.top})`)
+                .attr("class", "histogram_content")
+            .append("rect").attr("height", chart_height).attr("width", chart_width).attr("fill", "#f2f2f2").attr("x", 0).attr("y", 0);
+
+        d3.select("body")
+            .append("svg")
+            .attr("class", "distance_histogram")
+            .attr("width", chart_width + chart_margin.left + chart_margin.right)
+            .attr("height", chart_height + chart_margin.top + chart_margin.bottom)
+            .append("g")
+                .attr("transform", `translate(${chart_margin.left},${chart_margin.top})`)
+                .attr("class", "distance_histogram_content")
+            .append("rect").attr("height", chart_height).attr("width", chart_width).attr("fill", "#f2f2f2").attr("x", 0).attr("y", 0);
+
+        
+
+        // marienplatz details
         marienplatz.x = xScale(marienplatz.lon)
         marienplatz.y = yScale(marienplatz.lat)
         marienplatz.imageIndex = Math.round(marienplatz.y) * that.width + Math.round(marienplatz.x)
@@ -185,18 +221,20 @@ function MVV_Map () {
 
         //load data
         this.stops = await this.load_stops();
-        var [stadtteile, parks, wasser] = await this.load_mapData();
+        var [stadtteile, parks, wasser, strassen] = await this.load_mapData();
         this.stadtteile = rewind(stadtteile, true)
         this.parks = rewind(parks, true)
         this.wasser = rewind(wasser, true)
+        this.strassen = strassen
     
         //render Stadtteile
-        this.addUI()
+        
         this.addMapData();
         this.addColours()
         this.addPoints()
         that.addMe();
         that.updateChart();
+        that.newChart();
 
       
 
@@ -271,27 +309,18 @@ function MVV_Map () {
 
             })
 
+        var address_invo = d3.select(".UI").append("div").attr("class", "UI-div").attr("id", "address-info")
+
         // Add event listener to the button
-        // document.getElementById("geocode-button").addEventListener("click", handleGeocode);
 
         document.getElementById("geocode-button").addEventListener("click", async function() {
             handleGeocode();
-            const address = document.getElementById("address").value;
-            const distance = await getDistanceToMarienplatz(address);
-            if (distance !== null) {
-                console.log(`Distance to Marienplatz: ${distance.toFixed(2)} km`);
-            }
         });
 
         // Add event listener to the input field for the Enter key
         document.getElementById("address").addEventListener("keydown", async function(event) {
             if (event.key === "Enter") {
                 handleGeocode();
-                const address = document.getElementById("address").value;
-                const distance = await getDistanceToMarienplatz(address);
-                if (distance !== null) {
-                    console.log(`Distance to Marienplatz: ${distance.toFixed(2)} km`);
-                }
             }
         });
 
@@ -304,15 +333,33 @@ function MVV_Map () {
                 } else {
                     const coordinates = await getCoordinates(address);
                     this.me = coordinates;
+                    let pixel = distances_per_pixel[Math.round(yScale(coordinates.lat)) * that.width + Math.round(xScale(coordinates.lon))]
+                    
                     // Add the point to the map
                     that.addMe();
                     that.updateChart();
+                    that.addInfoToUI(pixel);
+
+                    
                 }
             } catch (error) {
                 alert(error.message);
             }
         }
 
+    }
+
+    this.addInfoToUI = function(pixel) {
+        var that = this;
+
+        d3.select("#address-info").selectAll("p")
+        .data([pixel])
+        .join("p")
+        .html(d => "Coordinates: " + d.lat.toFixed(2) + ", " + d.lon.toFixed(2) +
+            "<br> Closest Station: " + d.name + "<br> Distance to next Station: "
+            + haversineDistance(d, {lon: that.stops.features[pixel.index_to_station].geometry.coordinates[0], 
+                lat: that.stops.features[pixel.index_to_station].geometry.coordinates[1]
+            }).toFixed(3) + "km")
     }
 
 
@@ -340,9 +387,10 @@ function MVV_Map () {
 
     this.load_mapData = async function(){
         var stadtteile = await d3.json("data/osm_stadtteilgrenzen.geojson")
-        var parks = await d3.json("data/osm_parks.geojson")
+        var parks = await d3.json("data/osm_parks_forests.geojson")
         var wasser = await d3.json("data/osm_wasser.geojson")
-        return [stadtteile, parks, wasser]
+        var strassen = await d3.json("data/osm_strassen.geojson")
+        return [stadtteile, parks, wasser, strassen]
     }
 
     this.computePixelData = function() {
@@ -420,8 +468,8 @@ function MVV_Map () {
                 .join("image")
                 .attr("x", 0)
                 .attr("y", 0)
-                .attr("width", width)
-                .attr("height", height)
+                .attr("width", that.width)
+                .attr("height", that.height)
                 .attr("href", image.src)
                 .style("opacity", 0.8)
         };
@@ -519,23 +567,14 @@ function MVV_Map () {
         }
     }
 
-    async function getDistanceToMarienplatz(address) {
-        try {
-            const coordinates = await getCoordinates(address);
-            const distance = haversineDistance(coordinates, marienplatz);
-            return distance;
-        } catch (error) {
-            console.error(error.message);
-            return null;
-        }
-    }
+
 
     this.getDistancesPerPixelForSameDistanceToMarienplatz = function(targetDistance) {
         const result = [];
         
         this.distances_per_pixel.forEach((pixel) => {
     
-            if (Math.abs(pixel.dist_to_marienplatz - targetDistance) < 0.5) { // Adjust the tolerance as needed
+            if (Math.abs(pixel.dist_to_marienplatz - targetDistance) < 0.6) { // Adjust the tolerance as needed
                 const deltaX = pixel.lon - marienplatz.lon;
                 const deltaY = pixel.lat - marienplatz.lat;               
                 pixel.theta = Math.atan2(deltaY, deltaX);
@@ -548,50 +587,38 @@ function MVV_Map () {
     }
 
     this.updateChart = function() {
-        var that = this;
         var me = this.me;
         var distanceToMarienplatz = pixelDistance(me, marienplatz);
         const pointsWithSameDistance = this.getDistancesPerPixelForSameDistanceToMarienplatz(distanceToMarienplatz);
         pointsWithSameDistance.sort((a, b) => a.theta - b.theta);
         
-        const margin = { top: 20, right: 30, bottom: 40, left: 40 };
-        const width = 400 - margin.left - margin.right;
-        const height = 200 - margin.top - margin.bottom;
         
-        d3.select("body").selectAll(".histogram")
-            .data([""])
-            .join("svg")
-            .attr("class", "histogram")
-            .attr("width", width + margin.left + margin.right)
-            .attr("height", height + margin.top + margin.bottom)
-            
-        const svg = d3.select(".histogram").selectAll("g")
-            .data([""])
-            .join("g")
-            .attr("transform", `translate(${margin.left},${margin.top})`);
-        
+        var svg = d3.select(".histogram_content")
+
         const x = d3.scaleLinear()
             .domain(d3.extent(pointsWithSameDistance, d => d.theta))
-            .range([0, width]);
+            .range([0, chart_width]);
         
         const y = d3.scaleLinear()
             .domain([0, d3.max(pointsWithSameDistance, d => d.dist)])
             .nice()
-            .range([height, 0]);
+            .range([chart_height, 0]);
         
         // svg.append("g")
         //     .attr("class", "x-axis")
         //     .attr("transform", `translate(0,${height})`)
         //     .call(d3.axisBottom(x).tickFormat(""));
         
-        svg.append("g")
+        svg.selectAll("g.y-axis") //TODO join
+            .data([1])
+            .join("g")
             .attr("class", "y-axis")
             .call(d3.axisLeft(y));
 
 
         const area = d3.area()
             .x(d => x(d.theta))
-            .y0(height)
+            .y0(chart_height)
             .y1(d => y(d.dist))
             // .curve(d3.curveBasis); // Use a smoothing curve
 
@@ -619,7 +646,7 @@ function MVV_Map () {
             .attr("class","highlight_line")
             .attr("stroke-width", "2")
             .attr("stroke", "black")
-            .attr("y1", height)
+            .attr("y1", chart_height)
             .attr("visibility", "hidden")
             .on("mouseout", function () {
                 d3.select(this)
@@ -637,7 +664,6 @@ function MVV_Map () {
         svg.select(".area")
             .on("mousemove", function (event, d) {
                 let pixel = pointsWithSameDistance.filter(e => Math.abs(e.theta - x.invert(event.layerX)) < 0.01)[0];
-                console.log(event)
                 if(pixel) {
                     d3.select(".circle_points")
                         .selectAll(".highlight_point")
@@ -654,7 +680,7 @@ function MVV_Map () {
                     
                     
                 
-                    d3.selectAll(".highlight_line")
+                    svg.selectAll(".highlight_line")
                         .data([pixel])
                         .join("line")
                         .attr("visibility", "visible")
@@ -688,7 +714,7 @@ function MVV_Map () {
             .attr("stroke", "darkgrey")
             .attr("stroke-width", 1)
             .attr("x1", 0)
-            .attr("x2", width)
+            .attr("x2", chart_width)
             .attr("y1", y(mean))
             .attr("y2", y(mean))
 
@@ -704,11 +730,128 @@ function MVV_Map () {
             .attr("x1", d => x(d.theta))
             .attr("x2", d => x(d.theta))
             .attr("y1", d => y(d.dist))
-            .attr("y2", height)
+            .attr("y2", chart_height)
         
     }
 
+    this.newChart = function() {
+        var me = this.me;
+        var all_distances_from_marienplatz = Array.from({ length: 270 }, (_, i) => i + 1);
+        const all_points = all_distances_from_marienplatz.map((dist) => this.getDistancesPerPixelForSameDistanceToMarienplatz(dist));
+        const all_points_mean = all_points.map((points) => d3.mean(points, d => d.dist));
+        // pointsWithSameDistance.sort((a, b) => a.theta - b.theta);
 
+        
+        
+        var svg = d3.select(".distance_histogram_content")
+
+        const x = d3.scaleLinear()
+            .domain([0, d3.max(all_distances_from_marienplatz)])
+            .range([0, chart_width]);
+        
+        const y = d3.scaleLinear()
+            .domain([0, d3.max(all_points_mean)])
+            .nice()
+            .range([chart_height, 0]);
+        
+        // svg.append("g")
+        //     .attr("class", "x-axis")
+        //     .attr("transform", `translate(0,${height})`)
+        //     .call(d3.axisBottom(x).tickFormat(""));
+        
+        svg.selectAll("g.y-axis")
+            .data([1])
+            .join("g")
+            .attr("class", "y-axis")
+            .call(d3.axisLeft(y));
+
+        svg.selectAll("g.x-axis")
+            .data([1])
+            .join("g")
+            .attr("class", "x-axis")
+            .attr("transform", `translate(0,${chart_height})`)
+            .call(d3.axisBottom(x));
+            
+
+
+        const area = d3.area()
+            .x((d, i) => x(i))
+            .y0(chart_height)
+            .y1(d => y(d))
+            // .curve(d3.curveBasis); // Use a smoothing curve
+
+        // add area to chart
+        svg.selectAll(".area")
+            .data([""])
+            .join("path")
+            .attr("class", "area")
+            .attr("fill", "grey")
+            .transition().duration(200)
+            .attr("d", area(all_points_mean));
+
+        
+        
+        svg.append("line")
+            .attr("class","highlight_line")
+            .attr("stroke-width", "2")
+            .attr("stroke", "black")
+            .attr("y1", chart_height)
+            .attr("visibility", "hidden")
+            .on("mouseout", function () {
+                d3.select(this)
+                    .attr("visibility", "hidden")
+
+                d3.select(".circle_points").selectAll(".histogram_circle_hover")
+                    .attr("visibility", "hidden")
+            });
+
+
+        svg.select(".area")
+            .on("mousemove", function (event, d) {
+                let pixel = all_points_mean.filter(function(e,i) {
+                    return Math.abs(i - x.invert(event.layerX)) < 0.5
+                })[0];
+                if(pixel) {
+                    // add circle around marienplatz
+                    d3.select(".circle_points").selectAll(".histogram_circle_hover")
+                        .data([all_points_mean.findIndex(e => e === pixel)])
+                        .join("circle")
+                        .attr("class", "histogram_circle_hover")
+                        .attr("cx", marienplatz.x)
+                        .attr("cy", marienplatz.y)
+                        .attr("r", d => d)
+                        .attr("stroke", "lightgrey")
+                        .attr("stroke-width", "1.5")
+                        .attr("fill", "none")
+                        .attr("visibility", "visible")
+                    
+                    
+                
+                    svg.select(".highlight_line")
+                        .data([pixel])
+                        .join("line")
+                        .attr("visibility", "visible")
+                        .attr("x1", event.layerX)
+                        .attr("x2", event.layerX)
+                        .attr("y2", d => y(d))
+
+                
+                }
+            })
+            .on("mouseout", function (event, d) {
+                let new_object = d3.select(event.relatedTarget)
+                   if( new_object._groups[0][0] && new_object.attr("class") != "highlight_line" ) {
+                        d3.select(".highlight_line")
+                            .attr("visibility", "hidden")
+
+                        d3.select(".circle_points").selectAll(".histogram_circle_hover")
+                            .attr("visibility", "hidden")
+                   }
+            });
+
+        
+        
+    }
 
     this.addMapData = function() {
         var that = this;
@@ -720,7 +863,6 @@ function MVV_Map () {
             .attr("d", pathGenerator)
             .attr("fill", colours.parks)
             .attr("stroke", "none")
-            .attr("opacity", 0.7)
 
         d3.select(".water").selectAll(".wasser")
             .data(that.wasser.features)
@@ -738,9 +880,26 @@ function MVV_Map () {
             .attr("class", "borough")
             .attr("d", pathGenerator)
             .attr("fill", "none")
-            .attr("stroke", "#63391d")
+            .attr("stroke"," #63391d")
             .attr("stroke-width", 1)
             .attr("opacity", 0.3)
+
+        
+        d3.select(".strassen").selectAll(".strasse")
+            .data(that.strassen.features)
+            .join("path")
+            .attr("class", "strasse")
+            .attr("d", pathGenerator)
+            .attr("fill", "none")
+            .attr("stroke", function (d) {
+                if(d.properties.highway === "motorway" || d.properties.highway === "primary") {
+                    return "rgb(165, 78, 35)"
+                } else {
+                    return "rgb(195, 118, 80)"
+                }
+            })
+            .attr("stroke-width", 1.5)
+            .attr("opacity", 0.4)
 
     }
 
