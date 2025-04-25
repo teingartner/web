@@ -1,8 +1,11 @@
 //TODO mit Einwohnerdichte verrechnen
-//Straßenachsen
-// Klick wechselt Adresse
-// Bei Hover über Area nächste Station anzeigen
+// Bei Hover über Area nächste Station anzeigen (einfärben?)
+// Isolines
+// wie verändert ubahn/Sbahn/Tram die durchschnittliche Distanz zur nächsten Station
+// Story!
+
 function MVV_Map () {
+    var debug = false;
 
     // Set up the SVG area and margins
     this.margin = { top: 50, right: 20, bottom: 20, left: 60 };
@@ -229,12 +232,13 @@ function MVV_Map () {
     
         //render Stadtteile
         
-        this.addMapData();
-        this.addColours()
-        this.addPoints()
+        that.addMapData();
+        that.addColours()
+        that.addPoints()
         that.addMe();
-        that.updateChart();
-        that.newChart();
+        that.addIsoline(30)
+        // that.updateChart();
+        // that.newChart();
 
       
 
@@ -305,6 +309,7 @@ function MVV_Map () {
                     that.addColours()
                     that.addPoints()
                     that.updateChart()
+                    that.newChart()
                 }
 
             })
@@ -587,6 +592,7 @@ function MVV_Map () {
     }
 
     this.updateChart = function() {
+        if(!debug) {
         var me = this.me;
         var distanceToMarienplatz = pixelDistance(me, marienplatz);
         const pointsWithSameDistance = this.getDistancesPerPixelForSameDistanceToMarienplatz(distanceToMarienplatz);
@@ -732,9 +738,12 @@ function MVV_Map () {
             .attr("y1", d => y(d.dist))
             .attr("y2", chart_height)
         
+        }
+        
     }
 
     this.newChart = function() {
+        if(!debug) {
         var me = this.me;
         var all_distances_from_marienplatz = Array.from({ length: 270 }, (_, i) => i + 1);
         const all_points = all_distances_from_marienplatz.map((dist) => this.getDistancesPerPixelForSameDistanceToMarienplatz(dist));
@@ -765,12 +774,34 @@ function MVV_Map () {
             .attr("class", "y-axis")
             .call(d3.axisLeft(y));
 
+        //yAxis label
+        svg.selectAll("text.axislabel.y")
+            .data([1])
+            .join("text")
+            .attr("class", "axislabel y")
+            .attr("text-anchor", "middle")
+           .attr("y", 0)
+            .attr("dy", ".75em")
+            .attr("transform", "translate(-35," + chart_height/2 + "),rotate(-90)")
+            .text("avg distance to next station (km)");
+
         svg.selectAll("g.x-axis")
             .data([1])
             .join("g")
             .attr("class", "x-axis")
             .attr("transform", `translate(0,${chart_height})`)
             .call(d3.axisBottom(x));
+
+        //xAxis label
+        svg.selectAll("text.axislabel.x")
+            .data([1])
+            .join("text")
+            .attr("class", "axislabel x")
+            .attr("text-anchor", "middle")
+            .attr("y", chart_height + 20)
+            .attr("x", chart_width/2)
+            .attr("dy", ".75em")
+            .text("distance to Marienplatz (km)");
             
 
 
@@ -849,7 +880,7 @@ function MVV_Map () {
                    }
             });
 
-        
+        }
         
     }
 
@@ -900,6 +931,23 @@ function MVV_Map () {
             })
             .attr("stroke-width", 1.5)
             .attr("opacity", 0.4)
+
+    }
+
+    this.addIsoline = function(threshold){
+        const contours = d3.contours().size([width, height])
+            .thresholds([threshold])
+        
+        const isoline = contours(distances_per_pixel.map(d => d.dist));
+        const isolinePath = d3.geoPath().projection(null);
+
+        d3.select(".map_content").selectAll(".isos")
+            .data(isoline)
+			.join("path")
+            .attr("class", "isos")
+            .attr("d", isolinePath)
+            .attr("fill", "none")
+            .attr("stroke", "black")
 
     }
 
